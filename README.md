@@ -1,5 +1,10 @@
 # MacroEconVue
 
+# Data
+- current.csv: [Fred-MD](https://www.stlouisfed.org/research/economists/mccracken/fred-databases)
+    - Remove the transform row
+    - Rename the first column to date
+
 # References
 - Chinn, M. D., Meunier, B., Stumpner, S. (2023). "Nowcasting World Trade with Machine Learning: a Three-Step Approach", NBER Working Paper, No 31419, National Bureau of Economic Research
 - Macroeconomic random forest as: Goulet-Coulombe, P. (2020). “The Macroeconomy as a Random Forest”, arXiv pre-print
