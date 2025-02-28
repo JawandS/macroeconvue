@@ -42,20 +42,20 @@ from sklearn.preprocessing import StandardScaler
 
 # Import custom functions (assumed to exist in a module, e.g., in a folder "functions")
 # These functions are the Python counterparts of the R functions in "3-Functions"
-from functions.do_clean import do_clean           # corresponds to R's doClean
-from functions.do_align import do_align           # corresponds to R's doAlign
-from functions.pre_selection import pre_select      # corresponds to R's pre_select
-from functions.do_regression import run_regressions   # corresponds to R's run_regressions
+from functions import do_clean           # corresponds to R's doClean
+from functions import do_align           # corresponds to R's doAlign
+from functions import pre_select      # corresponds to R's pre_select
+from functions import run_regressions   # corresponds to R's run_regressions
 
 # ----------------------------------------------------------------------------
 # STEP 0 - SET USER PARAMETERS FOR THE HORSERACE
 # ----------------------------------------------------------------------------
 
 # Part 1: General settings
-name_input = "data_example.xlsx"         # Input file (located in "1-Inputs")
-min_start_date = "2001-01-15"             # Minimum start date for variables
-start_date_oos = "2012-01-15"             # Out-of-sample forecast start date
-end_date_oos = "2022-04-15"               # Out-of-sample forecast end date
+name_input = "fred-md.csv"          # Input file (located in "1-Inputs")
+min_start_date = "1990-01-01"             # Minimum start date for variables
+start_date_oos = "2008-01-01"             # Out-of-sample forecast start date
+end_date_oos = "2010-01-01"               # Out-of-sample forecast end date
 
 # Part 2: Forecast horizons, pre-selection, and regression combinations
 list_h = [-2, -1]                       # List of forecast horizons (negative: backcast, 0: nowcast, positive: forecast)
@@ -76,8 +76,8 @@ fast_MRF = 1                            # Fast tuning for macroeconomic random f
 
 # Read data from Excel and convert date column to datetime
 input_path = os.path.join("1-Inputs", name_input)
-data_init = pd.read_excel(input_path)
-data_init['date'] = pd.to_datetime(data_init['date'], format='%Y-%m-%d')
+data_init = pd.read_csv(input_path)
+data_init['date'] = pd.to_datetime(data_init['date'], format='%m-%d-%Y')
 
 # Clean dataset (e.g., interpolate missing values, remove variables starting after min_start_date)
 data_rmv = do_clean(data_init, min_start_date)
