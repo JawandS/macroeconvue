@@ -1,0 +1,102 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{url}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{MacroeconVue: A Privacy-Preserving Microfounded Approach for Demographic-Based Consumer Inflation Nowcasting}
+
+\author{
+    \IEEEauthorblockN{Jawand Singh}
+    \IEEEauthorblockA{
+        \textit{Computer Science} \\
+        \textit{William \& Mary} \\
+        Williamsburg, VA \\
+        jsingh07@wm.edu
+    }
+    \and
+    \IEEEauthorblockN{Alex Anderson}
+    \IEEEauthorblockA{
+        \textit{Computer Science} \\
+        \textit{William \& Mary} \\
+        Williamsburg, VA \\
+        atanderson@wm.edu
+    }
+}
+
+
+\maketitle
+
+\begin{abstract}
+Although many key monetary decisions made by central banks require real-time understanding of market conditions, official inflation metrics are only published on a monthly frequency. Furthermore, there is increased interest in how inflation affects different groups of Americans. Therefore, creating a nowcast (estimates of the present) that includes insights by demographics would further empower policy makers, central banks, and macroeconomists. MacroeconVue proposes a privacy-preserving method of leveraging private data using federated learning, meaning no data would ever leave user devices. This data would be used in a macroeconomic random forest machine learning model to create an accurate and interpretable model of consumer inflation. As a result, the MacroeconVue system would create a high-frequency consumer inflation index that allows for deeper understanding of inflation by subgroup without compromising individual privacy. 
+\end{abstract}
+
+\begin{IEEEkeywords}
+Nowcasting Inflation, Machine Learning, Federated Learning, Computational Economics
+\end{IEEEkeywords}
+
+\section{Introduction}
+\subsection{Economic Relevance}
+Inflation represents a sustained increase in the general price level of goods and services. This increase often means consumers cannot make their usual purchases with the same amount of income. Understanding inflation is key for policymakers, businesses, consumers, and central banks in order to accomplish their respective goals. In particular, one of the United States Federal Reserve (Fed) mandates is for stable prices \cite{fomc_statement}, meaning the Fed has a vested interest in understanding inflation. Specifically, the Fed uses the Personal Consumption Expenditures (PCE) price index, which shows how Americans allocate their spending. The Fed prefers to use PCE over alternative measures of inflation precisely because it is quicker to adapt to changes in spending patterns \cite{fed_inflation}. Over time, and particularly after COVID-19’s extreme economic changes, greater interest was taken in high-frequency metrics of inflation. For example, the Cleveland Fed provides a public nowcast (estimates of the present) of inflation in order to better inform other models \cite{cleveland_nowcasting}. and a study done in Germany on nowcasting inflation using machine learning on high-frequency scanner data which yielded "competitive results" \cite{ecb_nowcasting}. 
+
+\subsection{Machine Learning for Economics}
+Traditionally, economic models are constructed using domain knowledge and serve as simplified abstractions of complex phenomena. With machine learning, a sufficient number of observations can be used to construct models of complex systems that may not be easily abstracted otherwise \cite{simeone_ml}. In the domain of macroeconomics, previous work has been done to replicate existing models with machine learning, in some cases creating models even more robust than traditional versions \cite{imf_rbc}. It is important to note that machine learning does not always serve as an improvement over traditional methods. Domain knowledge is still relevant when selecting a machine learning model in any context \cite{simeone_ml}. Furthermore, macroeconomics often uses non-stationary time series data, meaning that the underlying statistical properties of the data change with time. Traditional machine learning models used to forecast non-stationary data can often face significant errors that need to be accounted for \cite{acm_stationarity}. Finally, machine learning models can often be difficult to interpret, which is critical in an economic context \cite{boc_ml}.
+
+\subsection{Research Gap}
+Although previous work has been done on leveraging machine learning for nowcasting of macroeconomic variables, such as inflation, the integration of federated learning with such models has not been explored.
+
+\subsection{Research Questions}  
+\textbf{RQ 1: Privacy} Can we use federated learning to include individual data without that data ever leaving a user's device?  
+
+\textbf{RQ 2: Accuracy} Can we find and select data sources to create an accurate model of consumer inflation?  
+
+\textbf{RQ 3: Interpretability} Can we use a macroeconomic random forest model and interpret the resulting coefficients in an economically significantly manner?  
+
+\textbf{RQ 4: Performance} Can we use edge machine learning techniques to minimize any performance impact on user devices?  
+
+% \begin{figure*}[ht] 
+%     \centering
+%     \includegraphics[width=1\linewidth]{visual.png}
+%     \caption{Key Technologies}
+%     \label{fig:key-tech}
+% \end{figure*}
+
+\section{Related Works}
+\subsection{Macroeconomic Random Forest}
+In the area of machine learning for economic modeling one promising innovation is the macroeconomic random forest (MRF) \cite{macro_rf}. Fundamentally, the MRF seeks to create a model that is both accurate and interpretable through its modification of the traditional random forest (RF). Rather than estimate a single average value at the leaf of decision like a RF the MRF includes a linear regression in each leaf. As a result, the MRF's key output is generalized time-varying parameters (GTVP) which are economically interpretable values with economic significance. To elaborate, the MRF is able to identify the underlying structure of the time series data without a priori knowledge by automatically selecting the best feature to split the data on. In order to minimize the variance of each decision tree they are combined into a random forest. Furthermore, each tree is grown from a random subsample (bagging) and a subset of factors is used at each step to prevent the same trees from emerging (decorrelation) \cite{macro_rf}. In the context of MacroeconVue the MRF can be used to create accurate and interpretable nowcasts of consumer inflation while ingesting private data through federated learning. 
+
+\subsection{Nowcasting World Trade}
+One example of the application macroeconomic random forest was in the three-step approach of nowcasting world trade \cite{world_trade}. In this study both tree-based and regression-based (such as the MRF) machine learning models were evaluated. Based on their findings, the MRF was found to outperform the other models tested and existing nowcasts of world-trade. Beyond the model selection the study also developed a framework to approach nowcasting of macroeconomic variables. First, they identified the most informative predictors through pre-selection. In this step they use the least angle regression to eliminate the least correlated predictors, which they found to boost the end model performance relative to no pre-selection. Next, the study performed factor extraction through principal component analysis in order to summarize information and reduce noise which further improves the overall model performance. In order to account for the usage of mixed-frequency data, lagged data is moved forward and multiple series are created from data with advanced data. Finally, the the factors are used in a MRF which was found to significantly outperform more traditional tree based machine learning \cite{world_trade}. As noted in the paper, one future direction is to applying the three-step methodology on other macroeconomic variables which MacroeconVue seeks to do.
+
+\subsection{Federated Learning}
+Often times in real-world problems involving machine learning there is a key trade off between utility and privacy. This means that sensitive data is often essential in machine learning applications but is often too sensitive to share with a central entity. In order to address this, the framework of federated learning (FL) is presented as a way of using sensitive data without ever transmitting the private data \cite{agg_fl}. Instead, the results of training the model (such as gradient changes for a neural network) are shared while training is actually done locally on the private data. Several key techniques are involved in the secure aggregation of such data and several protocols are implemented to ensure user privacy. For example, double-masks are applied to the results being shared so that the original results can not be reconstructed, even by a malicious server \cite{agg_fl}. Furthermore, results are encrypted so that only the aggregate results of training can be decrypted, nothing individually. Beyond secure aggregation, distributed differential privacy is also applied to reinforce user privacy. With distributed differential privacy the chance of model memorization (where the model is over influenced by one data point) is reduced. This means that even if a user provides data that is a significant outlier, differential privacy means their results can not be recreated while improving the model performance. Overall, although there is some concern of a malicious server compromising the process, currently FL allows significant privacy reassurance \cite{privacy_fl}. As a result, MacroeconVue can leverage highly sensitive individual data (such as receipts, credit/debit transactions, bank statements, etc.) without that data ever leaving the user's device.
+
+\subsection{Federated Learning for Forecasting}
+While FL is a framework that allows for a variety of specific machine learning models to be used there are still specific concerns that need to be addressed when it comes to using FL for nowcasting. For example, one concern is the necessary use of highly heterogeneous data for a single global model \cite{fl_lstm}. Therefore, one proposed alternative is to cluster clients based on similarities in features and essentially create separate global models for each cluster \cite{fl_lstm}. The proposed federated averaging algorithm does have some challenges in feature selection that may be addressed based on some of the pre-selection and factor extraction techniques used in nowcasting world trade \cite{world_trade}. Furthermore, previous work has shown how federated learning can be used for the production of official statistics, with similar performance as centralized learning methods \cite{fl_stats}. Finally, FL needs to be adapted to other machine learning architectures beyond neural networks or their variants. One approach is with Federated Forest, which creates a lossless learning framework for random forests while maintaining privacy \cite{fed_forest}. In the context of MacroeconVue, this works hows how FL can be applied to official statistics and adapted for heterogeneous time series data for a tree-based machine learning architecture.
+
+\begin{thebibliography}{00}
+    \bibitem{fomc_statement} Federal Open Market Committee, ``Statement on Longer-Run Goals and Monetary Policy Strategy,'' Board of Governors of the Federal Reserve System, Washington, DC, USA, Jan. 2024. [Online]. Available: \url{https://www.federalreserve.gov/monetarypolicy/files/FOMC_LongerRunGoals.pdf} [Accessed: February 18, 2025]
+    \bibitem{fed_inflation} Board of Governors of the Federal Reserve System, ``Inflation (PCE),'' Washington, DC, USA, Aug. 2024. [Online]. Available: \url{https://www.federalreserve.gov/economy-at-a-glance-inflation-pce.htm} [Accessed: February 18, 2025]
+    \bibitem{cleveland_nowcasting} Federal Reserve Bank of Cleveland, ``Inflation Nowcasting,'' Cleveland, OH, USA, Aug. 2024. [Online]. Available: \url{https://www.clevelandfed.org/indicators-and-data/inflation-nowcasting} [Accessed: February 18, 2025]
+    \bibitem{ecb_nowcasting} G. W. Beck, K. Carstensen, J.-O. Menz, R. Schnorrenberger, and E. Wieland, ``Nowcasting consumer price inflation using high-frequency scanner data: evidence from Germany,'' European Central Bank, Frankfurt am Main, Germany, Working Paper No. 2930, Apr. 2023. [Online]. Available: \url{https://www.ecb.europa.eu/pub/pdf/scpwps/ecb.wp2930~05cff276eb.en.pdf}
+    \bibitem{simeone_ml} O. Simeone, ``A Very Brief Introduction to Machine Learning With Applications to Communication Systems,'' arXiv, Aug. 2018. [Online]. Available: \url{https://arxiv.org/pdf/1808.02342}
+    \bibitem{imf_rbc} T. Atashbar, R. A. Shi, ``AI and Macroeconomic Modeling: Deep Reinforcement Learning in an RBC model,'' IMF Working Paper No. 2023(040), Feb. 2023. [Online]. Available: \url{https://www.elibrary.imf.org/view/journals/001/2023/040/article-A001-en.xml}
+    \bibitem{acm_stationarity} A. Dixit, S. Jain, ``Effect of Stationarity on Traditional Machine Learning Models: Time Series Forecasting Perspective,'' in *Proceedings of the 14th International Conference on Contemporary Computing (IC3)*, Noida, India, Nov. 2021 [Online]. Available: \url{https://dl.acm.org/doi/10.1145/3474124.3474167}
+    \bibitem{boc_ml} A. Desai, ``Machine Learning for Economics Research: When, What and How,'' Bank of Canada, Staff Analytical Note 2023-16, Oct. 2023. [Online]. Available: \url{https://www.bankofcanada.ca/2023/10/staff-analytical-note-2023-16}
+    \bibitem{macro_rf} P. G. Coulombe, ``The Macroeconomy as a Random Forst,'' Mar. 2021. [Online]. Available: \url{https://arxiv.org/pdf/2006.12724}
+    \bibitem{world_trade} M. D. Chinn, B. Meunier, S. Stumpner, ``Nowcasting World Trade with Machine Learning: a Three-Step Approach,'' Nationa Buerau of Economic Research, Jun. 2023. [Online]. Available: \url{https://www.nber.org/papers/w31419}.
+    \bibitem{privacy_fl} F. Hartmann, P. Kairouz, ``Distributed differential privacy for federated learning,'' Google Research, Mar. 2023. [Online]. Available: \url{https://research.google/blog/distributed-differential-privacy-for-federated-learning/}.
+    \bibitem{agg_fl} K. Bonawitz et al., ``Practical Secure Aggregation for Federated Learning on User-Held Data,'' Nov. 2016. [Online]. Available: \url{https://arxiv.org/pdf/1611.04482}
+    \bibitem{fl_lstm} F. D. Gonzalez, `` Federated Learning for Time Series Forecasting Using LSTM Networks: Exploiting Similarities Through Clustering,'' KTH Royal Institute of Technology, 2019. [Online]. Available: \url{https://kth.diva-portal.org/smash/get/diva2:1334598/FULLTEXT01.pdf}
+    \bibitem{fl_stats} J. Stock, O. Hauke, J. Weißmann, H. Federrath, ``The Applicability of Federated Learning to Official Statistics,'' Sep. 2023. [Online]. Available: \url{https://arxiv.org/abs/2307.15503}
+    \bibitem{fed_forest} Y. Liu, Y. Liu, Z. Liu, J. Zhang, C. Meng, Y. Zheng, ``Federated Forest,'' IEEE, May 2019. [Online]. Available: \url{https://arxiv.org/abs/1905.10053}
+
+\end{thebibliography}
+
+\end{document}
