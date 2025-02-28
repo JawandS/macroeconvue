@@ -52,7 +52,7 @@ from functions import run_regressions   # corresponds to R's run_regressions
 # ----------------------------------------------------------------------------
 
 # Part 1: General settings
-name_input = "fred-md.csv"          # Input file (located in "1-Inputs")
+name_input = "/home/js/macroeconvue/nowcasting/fred-md.csv"          # Input file (located in "1-Inputs")
 min_start_date = "1990-01-01"             # Minimum start date for variables
 start_date_oos = "2008-01-01"             # Out-of-sample forecast start date
 end_date_oos = "2010-01-01"               # Out-of-sample forecast end date
@@ -75,9 +75,9 @@ fast_MRF = 1                            # Fast tuning for macroeconomic random f
 # ----------------------------------------------------------------------------
 
 # Read data from Excel and convert date column to datetime
-input_path = os.path.join("1-Inputs", name_input)
-data_init = pd.read_csv(input_path)
-data_init['date'] = pd.to_datetime(data_init['date'], format='%m-%d-%Y')
+# input_path = os.path.join("1-Inputs", name_input)
+data_init = pd.read_csv(name_input)
+data_init['date'] = pd.to_datetime(data_init['date'], format='%m/%d/%Y')
 
 # Clean dataset (e.g., interpolate missing values, remove variables starting after min_start_date)
 data_rmv = do_clean(data_init, min_start_date)
