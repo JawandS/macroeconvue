@@ -7,7 +7,7 @@ import macroecon_tools as mt
 
 ### Data Preprocessing ###
 # Import data
-data = pd.read_csv('/home/js/macroeconvue/nowcasting/fred-md.csv').s
+data = pd.read_csv('/home/js/macroeconvue/nowcasting/fred-md.csv')
 # Adjust datetime
 data['date'] = pd.to_datetime(data['date'], format='%m/%d/%Y')
 # Set date as index
