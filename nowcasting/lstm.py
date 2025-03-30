@@ -111,6 +111,3 @@ plt.legend()
 plt.title('Actual vs Predicted CPIAUCSL')
 # Save
 plt.savefig('/home/js/macroeconvue/nowcasting/predictions.png')
-
-# Save the model
-model.save('/home/js/macroeconvue/nowcasting/lstm_model.h5')
