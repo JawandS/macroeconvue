@@ -30,9 +30,10 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 # print("Data Shape:", data.shape)
 
 # Update modeling data
-data = pd.read_csv('modeling/var.csv')
+model = "lstm"
+data = pd.read_csv(f'modeling/{model}.csv')
 # add a new column in between the third and fourth column
 data['normalized'] = False
 data.insert(3, 'normalized', data.pop('normalized'))
 data['normalized'] = data['normalized'].astype(bool)
-data.to_csv('modeling/var.csv', index=False)
+data.to_csv(f'modeling/{model}.csv', index=False)
