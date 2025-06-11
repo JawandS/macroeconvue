@@ -93,6 +93,8 @@ class Household:
             Intermediate wealth after interest, income, and baseline consumption.
         """
         self.savings = self.savings * (1 + prev_rate / 52) + self.income - baseline_cost
+        if self.savings < 0.01 and self.savings > -0.01:
+            self.savings = 0.0
         return self.savings
 
     def compute_discretionary_budget(self, rate: float, lambda_: float) -> float:
@@ -153,6 +155,8 @@ class Household:
             Updated savings.
         """
         self.savings -= discretionary_spending
+        if self.savings < 0.01 and self.savings > 0:
+            self.savings = 0.0
         return self.savings
 
 class Marketplace:
@@ -472,7 +476,11 @@ class ABMSimulation:
                 planned_discretionary_spending[h.id] = spending
                 # Calculate desired quantity for each good
                 qty = spending / prices
-                planned_discretionary_qty[h.id] = qty
+                # Set near-zero planned quantities to zero
+                qty[np.abs(qty) <= 0.1] = 0.0
+                # Take the floor to get whole units
+                whole_qty = np.floor(qty).astype(int)
+                planned_discretionary_qty[h.id] = whole_qty
 
             # 3. Aggregate all household category demands for each marketplace
             all_household_qty_by_category = {
@@ -566,4 +574,4 @@ class ABMSimulation:
 if __name__ == "__main__":
     sim = ABMSimulation(num_households=10, seed=42)
     sim.run()
-    sim.write_outputs('transactions.csv', 'aggregates.csv', 'category_summary.csv')
+    sim.write_outputs('abm/transactions.csv', 'abm/aggregates.csv', 'abm/category_summary.csv')
