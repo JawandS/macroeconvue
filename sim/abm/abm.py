@@ -3,6 +3,8 @@ import pandas as pd
 from typing import List, Dict, Tuple, Optional
 import random
 
+MIN_PRICE = 0.1 
+
 class Household:
     """
     Represents a household agent in the ABM.
@@ -255,6 +257,7 @@ class Marketplace:
             indices = [i for i in indices if household_demands[i][1] > 0 and self.inventory > 0]
             if len(indices) == 0:
                 break
+        price = max(price, MIN_PRICE)
         self.price = price
         # Remaining stock discarded
 
