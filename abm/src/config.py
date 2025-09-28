@@ -3,10 +3,11 @@ Configuration parameters for MacroEconVue ABM Simulation
 """
 
 # Simulation time parameters
-TOTAL_DAYS = 12 * 28
-DAYS_PER_MONTH = 28
-DAYS_PER_WEEK = 7
+TOTAL_DAYS = 5
+DAYS_PER_MONTH = 5
+DAYS_PER_WEEK = 2
 BURN_IN_MONTHS = 12  # Required for year-over-year inflation calculation
+BURN_IN_TARGET_INFLATION = 0.02  # π* during burn-in (annualized)
 
 # Central bank parameters
 TARGET_INFLATION = 0.02  # π* = 2% annual
