@@ -35,8 +35,8 @@ def daily_events(day):
 
     # 7. Log transactions
     print("  7. Logging daily transactions...")
-    # TODO: Record all transactions to daily output
-
+    # TODO: Record all transaction in a centralized CSV
+    
     print(f"  Completed day {day}\n")
 
 
