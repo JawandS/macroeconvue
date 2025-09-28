@@ -1,0 +1,289 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{siunitx}
+\usepackage{hyperref}
+\geometry{margin=1in}
+
+\title{MacroEconVue Simulation: \\ ABM w/ LLM Households, ZI Firms, \& Taylor Rule}
+\author{Jawand Singh}
+\date{September 2025}
+
+\begin{document}
+\maketitle
+
+\emph{Note:} This writeup contains AI generated content
+
+\section{Overview}
+The simulation generates high-frequency household transactions and firm prices for inflation analysis under the assumption of full employment. 
+
+\begin{itemize}
+    \item \textbf{Households:} allocate \emph{discretionary} budgets through an LLM decision policy, given current income, financial assets (which may be negative, representing debt), and observed prices. Required services (housing, utilities, healthcare, etc.) are treated as baseline expenditures that must be paid before discretionary spending.
+    
+    \item \textbf{Services:} baseline expenditures with prices updated once per month. Prices drift around the observed annual (year-over-year) inflation rate with added idiosyncratic noise.
+    
+    \item \textbf{Discretionary goods:} produced daily by firms following a zero-intelligence (ZI) inventory rule. Prices adjust each day using an inflation drift implied by annual inflation, with further ZI-based markups (for stockouts) or markdowns (for excess inventory).
+    
+    \item \textbf{Central bank:} sets an \emph{annual} nominal policy rate $i_m$ each month using a Taylor rule based on year-over-year inflation. This annual policy rate is converted into an effective \emph{monthly accrual rate} $\rho_m$, which applies to both household savings and household debt at the end of each month.
+\end{itemize}
+
+\textbf{Outputs:}  
+\begin{itemize}
+    \item \emph{Daily:} transactions by agent and category, including expenditures, quantities, and prices.
+    \item \emph{Monthly:} CPI, year-over-year inflation, the policy rate, and updated financial balances.
+\end{itemize}
+
+\paragraph{Time}
+Days $t=1,\dots,T$ grouped into weeks and months. One week $=$ 7 days; one month $=$ 4 weeks $=$ 28 days. Month $m$ is the set of days $\mathcal{D}(m)$ with $\lvert \mathcal{D}(m)\rvert=28$.
+
+\section{Inflation Measurement (Annual by Default)}
+
+Let $\mathcal{K}=\mathcal{S}\cup\mathcal{G}$ index services and goods with fixed CPI weights $\{w_k\}_{k\in\mathcal{K}}$. Define the monthly average price for item $k$ as
+$$
+p_{k,m}=\frac{1}{28}\sum_{t\in\mathcal{D}(m)} p_{k,t}.
+$$
+
+The CPI level index is
+$$
+\mathrm{CPI}_m=\sum_{k\in\mathcal{K}}w_k\,\frac{p_{k,m}}{p_{k,0}}.
+$$
+
+\paragraph{Initialization (Burn-in).}  
+Because true year-over-year (YoY) inflation requires 12 months of history, the simulation begins with a 12-month burn-in period. During burn-in, all categories are repriced using a target annual inflation rate $\Pi^\star$, converted to monthly and daily drifts:
+$$
+\delta^{(\mathrm{mo})}=(1+\Pi^\star)^{1/12}-1,\qquad
+\delta^{(\mathrm{d})}=(1+\Pi^\star)^{1/28}-1.
+$$
+These drifts generate consistent synthetic price paths so that $\{\mathrm{CPI}_m\}_{m=0}^{12}$ is defined.
+
+\paragraph{Operational (Post Burn-in).}  
+Once 12 months of prices are available, YoY inflation is computed directly as
+$$
+\Pi_m=\frac{\mathrm{CPI}_m}{\mathrm{CPI}_{m-12}}-1,\qquad m \geq 12.
+$$
+This $\Pi_m$ is the only inflation measure used by agents and the central bank.
+
+\paragraph{Conversion for Pricing.}  
+At each month $m \geq 12$, annual inflation $\Pi_m$ is mapped into monthly and daily drifts:
+$$
+\delta_m^{(\mathrm{mo})}=(1+\Pi_m)^{1/12}-1,\qquad
+\delta_m^{(\mathrm{d})}=(1+\Pi_m)^{1/28}-1.
+$$
+These drifts govern service repricing (monthly) and goods repricing (daily).
+
+\section{Agent Types}
+
+\subsection*{Households (LLM policy)}
+\textbf{State on day $t$:} current prices $\mathbf{p}_t$, net financial assets $A_t$ (can be negative; negative values represent debt), realized income $Y_t^{(d)}$, history of own transactions $\mathcal{T}_{t-H:t-1}$, and the most recent observed annual inflation $\Pi_m$ for the current month $m$.
+
+\textbf{Decision (discretionary goods only).}  
+$$
+\mathbf{e}_t = f_{\theta}\!\left(\mathbf{p}_t,\,A_t,\,\Pi_m,\,\mathcal{T}_{t-H:t-1}\right),\qquad
+\sum_{g\in\mathcal{G}} e_{g,t}\le B_t,\;\; e_{g,t}\ge 0.
+$$
+Implied quantities purchased are
+$$
+q_{g,t}^{(\mathrm{hh})}=\frac{e_{g,t}}{p_{g,t}}.
+$$
+\emph{Implementation Note:} A strategy will have to be implemented to ensure the budget constraint is applied. Options include rescaling, tool calls from the LLM, or follow up prompts if the budget is exceeded.  \\
+
+\textbf{Financial accounting (monthly interest).}  
+
+Within each month $m$, the household’s daily asset position evolves as
+$$
+A_{t+1}=A_t + Y_t^{(d)} - \mathrm{Bills}_t - \sum_{g\in\mathcal{G}} e_{g,t}, 
+\qquad t\in \mathcal{D}(m),
+$$
+where:
+\begin{itemize}
+    \item $A_t$: net financial assets at the start of day $t$ (positive = savings, negative = debt).
+    \item $Y_t^{(d)}$: daily income received on day $t$.
+    \item $\mathrm{Bills}_t$: required baseline service payments (e.g.\ housing, utilities, healthcare) due on day $t$.
+    \item $e_{g,t}$: expenditure on discretionary good $g \in \mathcal{G}$ on day $t$.
+    \item $\mathcal{G}$: the set of discretionary goods categories.
+    \item $\mathcal{D}(m)$: the set of days belonging to month $m$ (28 days in this model).
+\end{itemize}
+
+At the end of the month, the effective monthly interest rate $\rho_m$ implied by the annual policy rate $i_m$ is
+$$
+\rho_m=(1+i_m)^{1/12}-1,
+$$
+
+This rate is applied to $A_m$ at the end of each month yielding:
+$$
+A_{m+1}=(1+\rho_m)A_m
+$$
+
+\subsection*{Firms}
+
+\paragraph{Services (prices updated monthly).}
+Service prices are adjusted once per month based on the annual inflation rate plus noise:
+
+$$
+p_{s,m} = p_{s,m-1}\left(1+\delta_m^{(\mathrm{mo})}+\eta_{s,m}\right), 
+\qquad \eta_{s,m}\sim \mathcal{N}(0,\sigma_s^2)
+$$
+
+\textbf{Variable definitions:}
+\begin{itemize}
+    \item $p_{s,m}$ : price of service $s$ in month $m$
+    \item $\delta_m^{(\mathrm{mo})}$ : monthly inflation drift, derived from the annual inflation rate
+    \item $\eta_{s,m}$ : idiosyncratic monthly shock to service $s$, normally distributed with variance $\sigma_s^2$
+\end{itemize}
+
+\paragraph{Goods (ZI production, inventory, and pricing).}
+
+Firms (one per type of discretionary good) follow a simple zero-intelligence (ZI) process.  
+Each day consists of three stages:
+
+\subparagraph{1. Production.}  
+Each firm produces a quantity $Q_{g,t}$ based on lagged demand, long-run average output, and a random shock:
+$$
+Q_{g,t} \;=\; \alpha_Q\, q_{g,t-1} \;+\; (1-\alpha_Q)\,\bar{Q}_g \;+\; \varepsilon_{g,t}, 
+\qquad \varepsilon_{g,t} \sim \mathcal{N}(0,\sigma_Q^2)
+$$
+
+\textbf{Where:}
+\begin{itemize}
+    \item $Q_{g,t}$ : production of good $g$ on day $t$
+    \item $q_{g,t-1}$ : sales of good $g$ on the previous day
+    \item $\bar{Q}_g$ : long-run average production level of good $g$
+    \item $\alpha_Q$ : weight on lagged demand when determining production
+    \item $\varepsilon_{g,t}$ : production shock on day $t$, drawn from a normal distribution
+    \item $\sigma_Q^2$ : variance of the production shock distribution
+\end{itemize}
+
+
+\subparagraph{2. Inventory update.}  
+Starting-of-day inventory adds production and subtracts sales
+
+\subparagraph{3. Pricing rule.}  
+First, apply daily inflation drift to the previous price:
+$$
+\hat{p}_{g,t} \;=\; p_{g,t-1}\left(1+\delta_m^{(\mathrm{d})}\right)
+$$
+
+Then adjust based on inventory conditions:
+$$
+p_{g,t} \;=\;
+\begin{cases}
+\hat{p}_{g,t}(1+\alpha_{\uparrow}) & \text{if stockout (demand $>$ inventory)}, \\[6pt]
+\hat{p}_{g,t}(1-\beta_{\downarrow}) & \text{if excess inventory}, \\[6pt]
+\end{cases}
+$$
+
+\subparagraph{4. Rationing rule (proportional).}  
+If household demand exceeds available inventory, goods are rationed proportionally across all households:
+$$
+q_{h,g,t} \;=\; \frac{I_{g,t}^{\mathrm{start}}}{\sum_h q_{h,g,t}^{\mathrm{dem}}} \; q_{h,g,t}^{\mathrm{dem}}
+$$
+where $q_{h,g,t}^{\mathrm{dem}}$ is the demand submitted by household $h$ for good $g$.  
+This ensures that each household receives the same fraction of its demand when supply is scarce.
+
+\subsection*{Central Bank (Taylor rule)}
+Annual policy rate:
+$$
+i_m=r^*+\phi_\pi\left(\Pi_{m-12}-\pi^*\right).
+$$
+Monthly accrual rate:
+$$
+\rho_m=(1+i_m)^{1/12}-1.
+$$
+
+\section{Simulation Events}
+
+\subsection*{Daily}
+\begin{enumerate}
+\item Income.
+\item Goods supply and inventory update.
+\item Price updates for goods.
+\item Household LLM chooses discretionary goods expenditures.
+\item Inventory depletion.
+\item Ledger update: $A_{t+1}$.
+\item Log transactions.
+\end{enumerate}
+
+\subsection*{Monthly}
+\begin{enumerate}
+\item Compute CPI$_m$ and $\Pi_m$.
+\item Services reprice for month $m+1$.
+\item Adjust wages based on CPI$_m$.
+\item Update Taylor rule policy rate $i_m$.
+\item Apply monthly interest $\rho_m$ to assets.
+\end{enumerate}
+
+\section{Outputs}
+\textbf{Daily:} transactions table $(\text{agent},t,k,p_{k,t},e_{k,t},q_{k,t})$.  \\
+\textbf{Monthly:} CPI, annual inflation $\Pi_m$, policy rate $i_m$, balances.
+
+\section{Goods and Services}
+
+The economy consists of two categories of consumption items: \\
+(1) baseline \emph{services}, which households must purchase each period, and (2) discretionary \emph{goods}, which households choose subject to their budget.  \\
+baseline services vary based on the households type
+
+\begin{table}[!ht]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Category} & \textbf{Items} \\
+\midrule
+\emph{Services (baseline)} & Housing, Utilities, Communications, Transport, Healthcare, Basic Food \\
+\emph{Goods (discretionary)} & Dining, Entertainment, Apparel, Electronics, Home Goods, Travel \\
+\bottomrule
+\end{tabular}
+\caption{List of services and goods used in the simulation.}
+\end{table}
+
+\section{Household Configurations}
+
+Households in the simulation can be differentiated along both quantitative and qualitative dimensions.  
+This heterogeneity allows the model to capture variation in financial constraints, consumption patterns, and decision rules.  
+
+\subsection*{Quantitative Heterogeneity}
+\begin{itemize}
+    \item \textbf{Initial savings $A_0$:} households may begin with positive balances (savers) or negative balances (debtors).
+    \item \textbf{Income schedule $Y_t^{(d)}$:} daily  income levels vary across households, capturing heterogeneity in earning capacity.
+    \item \textbf{Baseline expenses $\mathrm{Bills}_t$:} service obligations differ across households, reflecting variation in fixed costs of living (e.g., housing rent, healthcare, utilities).
+\end{itemize}
+
+\subsection*{Qualitative Heterogeneity}
+\begin{itemize}
+    \item \textbf{Age:} younger households may allocate more to discretionary goods such as entertainment, while older households emphasize healthcare and services.
+    \item \textbf{Race / Gender:} included as descriptive attributes that may influence revealed preferences in empirical LLM-driven decision rules (not mechanical constraints).
+    \item \textbf{Fiscal responsibility:} households can be parameterized as ``prudent'' (prioritizing savings and debt repayment) or ``imprudent'' (favoring higher discretionary spending despite limited assets).
+\end{itemize}
+
+\subsection*{Implementation Note}
+Quantitative parameters ($A_0$, $Y_t^{(d)}$, $\mathrm{Bills}_t$) directly affect household budgets and financial evolution.  
+Qualitative attributes are passed to the LLM decision policy to shape allocation choices, without hard-coded mechanical effects.
+
+\section{Implementation Notes}
+\begin{itemize}
+\item $A_t\in\mathbb{R}$; interest applies symmetrically to savings and debt.
+\item Services = baseline; goods = discretionary.
+\item Week = 7 days; Month = 28 days.
+\item The LLM will need to be carefully prompted to handle budget constraint.
+\end{itemize}
+
+\section{Considerations}
+\begin{itemize}
+    \item Goals: (1) want to create synthetic transaction data that resembles credit card statements in the real world. (2) Want to look at how different qualitative / quantitative prompting affects the LLM behavior.
+    \item Focused on a simplified model that generates transaction data (not a hyper realistic model). Assumes things like full employment and a simplified price setting approach.
+    \item Literature, ZI (https://people.brandeis.edu/~blebaron/classes/agentfin/GodeSunder.html) and simplified taylor rule (https://www.atlantafed.org/cqer/research/taylor-rule)
+    \item Deliverables: a list of transactions for every type of agent, a list of events for agents: pay raises, interest earned
+    \item Validation: no deflation, no hyperinflation, no extreme debt/savings, allocations follow budget constraint
+\end{itemize}
+
+\section{Next Steps}
+Two immediate directions follow from the ABM outputs:
+
+\begin{itemize}
+    \item \textbf{Federated learning:} apply FL methods to the generated transaction data to evaluate whether the inflation rate can be recovered in a privacy-preserving manner.
+    \item \textbf{Econometric analysis:} examine household allocation decisions through regressions on quantitative and qualitative attributes, assessing how heterogeneity drives expenditure patterns.
+\end{itemize}
+
+
+\end{document}

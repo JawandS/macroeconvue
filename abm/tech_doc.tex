@@ -1,0 +1,395 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{siunitx}
+\usepackage{hyperref}
+\geometry{margin=1in}
+
+\title{MacroEconVue Simulation:\\
+Technical Implementation Plan for\\
+ABM w/ LLM Households, ZI Firms, \& Taylor Rule}
+\author{Jawand Singh}
+\date{September 2025}
+
+\begin{document}
+\maketitle
+
+\section{Scope \& Objectives}
+This document specifies an implementable software design for the economic model described in the project note
+\emph{``ABM w/ LLM Households, ZI Firms, \& Taylor Rule''}. It translates the economic objects, timing, and equations into
+data structures, algorithms, and program modules. Emphasis is on correctness, reproducibility, and extensibility.
+
+\paragraph{Core goals}
+\begin{itemize}
+  \item Deterministically generate high-frequency transactions and prices under monthly policy and interest accrual.
+  \item Enforce budget feasibility for LLM-driven household allocations.
+  \item Produce daily and monthly outputs suitable for downstream econometrics and federated learning.
+  \item Provide a validation harness to detect pathologies (deflation/hyperinflation, exploding debt, constraint violations).
+\end{itemize}
+
+\section{Software Architecture}
+\subsection*{Language \& Libraries}
+Python 3.11+, \texttt{numpy}, \texttt{pandas}, \texttt{scipy}, \texttt{pydantic} (config validation), \texttt{pyyaml} (config), \texttt{polars} (optional), \texttt{numba} (optional JIT), an LLM client (\emph{abstracted behind an interface}).
+
+\subsection*{Top-level Package Layout}
+\begin{verbatim}
+mev/
+  config/
+    defaults.yaml
+    schema.py
+  core/
+    timeindex.py         # calendar, month/day mapping (28-day months)
+    rng.py               # seeded RNG streams
+    types.py             # enums, typed IDs, dataclasses
+  economy/
+    cpi.py               # CPI weights, price aggregation
+    services.py          # monthly service repricing
+    goods.py             # ZI firms: production, inventory, pricing, rationing
+    policy.py            # Taylor rule, accrual rate conversion
+    wages.py             # wage indexation rule
+  agents/
+    households.py        # state transitions, bills, accounting
+    llm_policy.py        # LLM interface + budget projection layer
+  engine/
+    sim.py               # daily/monthly event loop
+    logging.py           # structured logs
+    io.py                # parquet/csv writers, schema enforcement
+  validation/
+    checks.py            # invariants, KPIs, dashboards
+    scenarios.py         # smoke tests / edge cases
+\end{verbatim}
+
+\section{Indices, IDs, \& Calendar}
+\textbf{Time.} Days $t=1,\dots,T$ grouped into months of 28 days. $\mathcal{D}(m)$ returns day indices for month $m$ with $\lvert \mathcal{D}(m)\rvert=28$.
+
+\textbf{Sets.} $\mathcal{S}$ (services) and $\mathcal{G}$ (discretionary goods). $\mathcal{K}=\mathcal{S}\cup\mathcal{G}$.
+
+\textbf{IDs.} Use integer IDs for households ($h$), firms ($g$), services ($s$). Stable, zero-based.
+
+\textbf{RNG.} A master seed $s_0$ deterministically spawns per-module streams: $s_{\text{services}}$, $s_{\text{goods}}$, $s_{\text{households}}$ to ensure reproducibility.
+
+\section{Parameters \& Defaults}
+All parameters are defined in \texttt{config/defaults.yaml} and validated with \texttt{pydantic}. The following table shows the main symbols used in code.
+
+\begin{table}[!ht]
+\centering
+\begin{tabular}{llp{7.5cm}}
+\toprule
+\textbf{Symbol} & \textbf{Type} & \textbf{Meaning} \\
+\midrule
+$w_k$ & float & CPI weights (fixed, $\sum_k w_k=1$) \\
+$\Pi^\star$ & float & Target annual inflation during burn-in \\
+$\delta_m^{(\mathrm{mo})}$ & float & Monthly drift from annual inflation \\
+$\delta_m^{(\mathrm{d})}$ & float & Daily drift from annual inflation \\
+$r^\ast$ & float & Neutral real rate in Taylor rule \\
+$\phi_\pi$ & float & Inflation coefficient in Taylor rule \\
+$\pi^\ast$ & float & Inflation target (YoY) \\
+$i_m$ & float & Annual policy rate set for month $m$ \\
+$\rho_m$ & float & Monthly accrual implied by $i_m$ \\
+$\alpha_Q$ & float & Weight on lagged demand for production \\
+$\bar{Q}_g$ & float & Long-run average daily production for good $g$ \\
+$\sigma_Q$ & float & Std. dev. of production shock \\
+$\alpha_{\uparrow}$ & float & Stockout markup for goods pricing \\
+$\beta_{\downarrow}$ & float & Markdown for excess inventory \\
+$\sigma_s$ & float & Std. dev. of monthly service price shock \\
+$H$ & int & Household history window length for LLM context \\
+$\kappa_w$ & float & Wage indexation intensity (see \S\ref{sec:wages}) \\
+\bottomrule
+\end{tabular}
+\caption{Key parameters (subset).}
+\end{table}
+
+\section{Price System \& CPI}
+\subsection*{CPI Aggregation}
+Monthly average price for item $k$:
+$$
+p_{k,m}=\frac{1}{28}\sum_{t\in\mathcal{D}(m)} p_{k,t}.
+$$
+CPI level:
+$$
+\mathrm{CPI}_m=\sum_{k\in\mathcal{K}} w_k\,\frac{p_{k,m}}{p_{k,0}}.
+$$
+
+\subsection*{Burn-in Initialization}
+Given target annual inflation $\Pi^\star$, set:
+$$
+\delta^{(\mathrm{mo})}=(1+\Pi^\star)^{1/12}-1,\qquad
+\delta^{(\mathrm{d})}=(1+\Pi^\star)^{1/28}-1.
+$$
+During months $m=1,\dots,12$, services reprice monthly with $\delta^{(\mathrm{mo})}$ (plus noise), goods reprice daily with $\delta^{(\mathrm{d})}$, producing a consistent 12-month price history.
+
+\subsection*{Operational Drifts}
+After burn-in, compute YoY inflation:
+$$
+\Pi_m=\frac{\mathrm{CPI}_m}{\mathrm{CPI}_{m-12}}-1,\qquad m\ge 12.
+$$
+Derive drifts for month $m$:
+$$
+\delta_m^{(\mathrm{mo})}=(1+\Pi_m)^{1/12}-1,\qquad
+\delta_m^{(\mathrm{d})}=(1+\Pi_m)^{1/28}-1.
+$$
+
+\section{Services Module}
+Each service $s\in\mathcal{S}$ reprices once per month:
+$$
+p_{s,m}=p_{s,m-1}\left(1+\delta_m^{(\mathrm{mo})}+\eta_{s,m}\right),\qquad \eta_{s,m}\sim\mathcal{N}(0,\sigma_s^2).
+$$
+Implementation details:
+\begin{itemize}
+  \item Vectorize across $s$; draw $\eta_{:,m}$ from a per-month RNG stream.
+  \item Persist daily service price as piecewise-constant within month: $p_{s,t}=p_{s,m}$ for $t\in\mathcal{D}(m)$.
+\end{itemize}
+
+\section{Goods (ZI Firms) Module}
+\subsection*{States}
+For each good $g\in\mathcal{G}$ on day $t$: price $p_{g,t}$, start-of-day inventory $I^{\mathrm{start}}_{g,t}$, production $Q_{g,t}$, realized sales $q_{g,t}$.
+
+\subsection*{Production}
+$$
+Q_{g,t}=\alpha_Q\,q_{g,t-1}+(1-\alpha_Q)\,\bar{Q}_g+\varepsilon_{g,t},\qquad \varepsilon_{g,t}\sim\mathcal{N}(0,\sigma_Q^2).
+$$
+
+\subsection*{Inventory Update}
+\begin{itemize}
+  \item $I^{\mathrm{start}}_{g,t}=I^{\mathrm{end}}_{g,t-1}+Q_{g,t}$.
+  \item After sales and rationing, $I^{\mathrm{end}}_{g,t}=\max\{I^{\mathrm{start}}_{g,t}-q_{g,t},\,0\}$.
+\end{itemize}
+
+\subsection*{Pricing}
+Drift step:
+$$
+\hat{p}_{g,t}=p_{g,t-1}\left(1+\delta_m^{(\mathrm{d})}\right).
+$$
+Inventory rule:
+$$
+p_{g,t}=
+\begin{cases}
+\hat{p}_{g,t}(1+\alpha_{\uparrow})& \text{if demand $>$ inventory (stockout)},\\[4pt]
+\hat{p}_{g,t}(1-\beta_{\downarrow})& \text{if excess inventory},\\[4pt]
+\hat{p}_{g,t}& \text{otherwise.}
+\end{cases}
+$$
+
+\subsection*{Rationing (Proportional)}
+If $\sum_h q^{\mathrm{dem}}_{h,g,t}>I^{\mathrm{start}}_{g,t}$, allocate
+$$
+q_{h,g,t}=\frac{I^{\mathrm{start}}_{g,t}}{\sum_h q^{\mathrm{dem}}_{h,g,t}}\,q^{\mathrm{dem}}_{h,g,t}.
+$$
+
+\section{Households Module}
+\subsection*{State \& Budget}
+On day $t$ in month $m$ household $h$ observes prices $\mathbf{p}_t$, assets $A_{h,t}$, income $Y_{h,t}^{(d)}$, bills $\mathrm{Bills}_{h,t}$, history $\mathcal{T}_{h,t-H:t-1}$, and YoY inflation $\Pi_m$.
+
+Define the discretionary budget
+$$
+B_{h,t}=\max\Big\{0,\; A_{h,t}+Y_{h,t}^{(d)}-\mathrm{Bills}_{h,t}-\Gamma_h\Big\},
+$$
+where $\Gamma_h\ge 0$ is a prudence buffer (configurable). This is a \emph{soft} cap for the LLM policy; a projection layer enforces feasibility.
+
+\subsection*{LLM Policy Interface \& Budget Projection}
+The LLM returns a nonnegative vector $\tilde{\mathbf{e}}_{h,t}\in\mathbb{R}^{\lvert\mathcal{G}\rvert}_{\ge 0}$ of proposed expenditures (in currency units) with an optional free-text rationale.
+
+\paragraph{Projection onto the budget simplex}
+We map $\tilde{\mathbf{e}}$ to the feasible set $\Delta(B)=\{\mathbf{e}\ge 0:\sum_g e_g\le B\}$ by Euclidean projection. If $\sum_g \tilde{e}_g\le B$, accept; else compute threshold $\tau$:
+\begin{enumerate}
+  \item Sort $u$ as $u_{(1)}\ge\dots\ge u_{(n)}$ from $\tilde{\mathbf{e}}$.
+  \item Find $\rho=\max\left\{j:\; u_{(j)}-\frac{1}{j}\left(\sum_{i=1}^j u_{(i)}-B\right)>0\right\}$.
+  \item Set $\tau=\frac{1}{\rho}\left(\sum_{i=1}^\rho u_{(i)}-B\right)$.
+  \item Output $e_g=\max\{\tilde{e}_g-\tau,\,0\}$.
+\end{enumerate}
+This preserves sparsity, is $\mathcal{O}(n\log n)$ (from sorting), and guarantees $\sum_g e_g=B$ when the cap binds.
+
+\paragraph{Quantities}
+$$
+q^{(\mathrm{hh})}_{h,g,t}=\frac{e_{h,g,t}}{p_{g,t}}.
+$$
+The goods module applies proportional rationing if inventory is insufficient; households are billed only for delivered quantities:
+$$
+\text{paid}_{h,g,t}=p_{g,t}\,q_{h,g,t},\qquad \text{refund}_{h,g,t}=e_{h,g,t}-\text{paid}_{h,g,t}\ge 0.
+$$
+
+\subsection*{Financial Accounting}
+Daily ledger within month $m$:
+$$
+A_{h,t+1}=A_{h,t}+Y_{h,t}^{(d)}-\mathrm{Bills}_{h,t}-\sum_{g\in\mathcal{G}}\text{paid}_{h,g,t}+\sum_{g\in\mathcal{G}}\text{refund}_{h,g,t}.
+$$
+
+\paragraph{Month-end interest (accrual from policy)}
+Given annual policy rate $i_m$, set
+$$
+\rho_m=(1+i_m)^{1/12}-1.
+$$
+Apply to end-of-month balance (simplest accounting mode):
+$$
+A_{h,m+1}=(1+\rho_m)\,A_{h,m}.
+$$
+\textit{Optional (more exact) mode}: accrue interest on the average daily balance in month $m$ to reduce timing bias (toggle in config).
+
+\section{Wages \& Income Indexation}\label{sec:wages}
+Monthly wage indexation uses CPI level growth. Let $W_{h,m}$ be the monthly wage base before daily splitting:
+$$
+g_m^{(\mathrm{CPI})}=\frac{\mathrm{CPI}_m}{\mathrm{CPI}_{m-1}}-1,\qquad
+W_{h,m+1}=W_{h,m}\left[1+\kappa_w\,g_m^{(\mathrm{CPI})}\right].
+$$
+Daily income is $Y_{h,t}^{(d)}=W_{h,m}/28$ for $t\in\mathcal{D}(m)$. $\kappa_w\in[0,1]$ tunes partial vs.\ full indexation.
+
+\section{Policy (Taylor Rule)}
+Annual rate (with configurable lag $L_{\pi}$ on observed inflation, default $L_{\pi}=12$ months):
+$$
+i_m=r^\ast+\phi_\pi\left(\Pi_{m-L_{\pi}}-\pi^\ast\right),\qquad
+\rho_m=(1+i_m)^{1/12}-1.
+$$
+
+\section{Event Engine}
+\subsection*{Daily Order (for each $t$)}
+\begin{enumerate}
+  \item Income realization for all $h$; bills $\mathrm{Bills}_{h,t}$ posted.
+  \item Goods: draw $Q_{g,t}$, update $I^{\mathrm{start}}_{g,t}$.
+  \item Goods: update $p_{g,t}$ via drift + inventory rule.
+  \item Households: call LLM, project $\tilde{\mathbf{e}}_{h,t}\mapsto \mathbf{e}_{h,t}$, compute demands.
+  \item Rationing: allocate delivered $q_{h,g,t}$; compute $\text{paid}$ and $\text{refund}$.
+  \item Ledger: update $A_{h,t+1}$ for all $h$.
+  \item Log transactions: append $(h,t,k,p_{k,t},e_{h,k,t},q_{h,k,t})$ with delivery flags.
+\end{enumerate}
+
+\subsection*{Month-End Order (for $m$)}
+\begin{enumerate}
+  \item Compute $\mathrm{CPI}_m$; if $m\ge 12$ compute $\Pi_m$.
+  \item Services: draw $\eta_{s,m+1}$ and set $p_{s,m+1}$.
+  \item Wages: update $W_{\cdot,m+1}$ via indexation; create $Y^{(d)}$ for next month.
+  \item Policy: set $i_{m+1}$ and $\rho_{m+1}$.
+  \item Interest: apply $(1+\rho_m)$ to $A_{\cdot,m}$ (or average-balance mode).
+\end{enumerate}
+
+\section{LLM Integration Details}
+\subsection*{Prompt Contract}
+Households are prompted with (a) current prices, (b) budget metadata (no raw balance), (c) short history statistics (e.g., last 7 days spent by category), (d) qualitative attributes. The model \emph{must} return strictly the JSON payload:
+\begin{verbatim}
+{
+  "expenditures": [{"good_id": int, "amount": float}, ...],
+  "notes": "optional brief rationale"
+}
+\end{verbatim}
+The parser validates nonnegativity, missing categories (implicitly zero), and total before projection. Temperature $=0$ (deterministic), with a retry-on-parse-fail policy.
+
+\subsection*{Feasibility Layer}
+Always apply the projection in \S\;Households to guarantee $\sum_g e_{g,t}\le B_{h,t}$.
+Optionally clip per-category maxima (configurable, guards against extreme LLM allocations).
+
+\section{Data Schemas \& IO}
+\subsection*{Daily Transactions (long form)}
+\begin{verbatim}
+cols = [
+  "day", "month", "household_id", "agent_type",  # hh or firm
+  "category_id", "category_type",                # good/service
+  "posted_price", "intended_spend", "delivered_qty",
+  "paid_amount", "refund_amount", "stockout_flag"
+]
+\end{verbatim}
+
+\subsection*{Monthly Aggregates}
+\begin{verbatim}
+cpi: ["month", "item_id", "item_type", "p_month", "p0", "weight", "CPI_m"]
+policy: ["month", "i_m", "rho_m"]
+wages: ["month", "household_id", "W_m"]
+balances: ["month", "household_id", "A_m"]
+\end{verbatim}
+
+All outputs written to \texttt{parquet} (typed), with optional CSV export.
+
+\section{Validation Harness}
+Automatically computed after each month:
+\begin{itemize}
+  \item \textbf{Price sanity}: $\min_k p_{k,t}>0$, CPI growth in plausible band (configurable).
+  \item \textbf{No deflation/hyperinflation}: $\Pi_m\in[\Pi_{\min},\Pi_{\max}]$ for rolling windows.
+  \item \textbf{Budget feasibility}: $\sum_g e_{h,g,t}\le B_{h,t}$ and $\text{paid}_{h,\cdot,t}\le e_{h,\cdot,t}$.
+  \item \textbf{Assets}: guard rails $A_{h,m}\in[A_{\min},A_{\max}]$ with warnings on breaches.
+  \item \textbf{Inventory}: no negative stocks; stockout frequency within band.
+\end{itemize}
+Failures raise exceptions in \texttt{sim.py} with contextual state dumps.
+
+\section{Complexity \& Scaling}
+For $H$ households, $G$ goods, $S$ services, $T$ days:
+\begin{itemize}
+  \item Goods production and pricing: $\mathcal{O}(G\,T)$.
+  \item Household policy + projection: $\mathcal{O}(H\,G\log G)$ per day (projection dominates).
+  \item Rationing: $\mathcal{O}(H\,G)$.
+\end{itemize}
+End-to-end daily step is roughly $\mathcal{O}(H\,G\log G + G)$; vectorize across goods and households to leverage BLAS. JIT the projection if needed.
+
+\section{Numerical Notes}
+\begin{itemize}
+  \item Use \texttt{float64}. Avoid compounding drift by repeatedly multiplying small increments in long loops; prefer monthly anchors for $\delta_m^{(\mathrm{d})}$.
+  \item Clip prices to $(\epsilon, +\infty)$ (e.g., $\epsilon=10^{-6}$).
+  \item When computing CPI, guard against $p_{k,0}=0$ via initialization checks.
+\end{itemize}
+
+\section{Reproducibility}
+\begin{itemize}
+  \item Persist \texttt{defaults.yaml} and a resolved \texttt{run\_config.yaml} (with overrides).
+  \item Log master seed and derived stream seeds; store hash of the LLM system prompt; record model name and version.
+  \item Write a \texttt{manifest.json} per run listing artifact paths and summary stats.
+\end{itemize}
+
+\section{Smoke Tests (Minimum Set)}
+\begin{itemize}
+  \item \textbf{Zero-noise services}: $\sigma_s=0$ yields deterministic CPI path.
+  \item \textbf{No-inventory constraint}: large $\bar{Q}_g$ eliminates stockouts.
+  \item \textbf{Binding budget}: set $B_{h,t}$ tiny; projection must allocate all to zero or the largest-utility item (if LLM proposes).
+  \item \textbf{Interest accrual only}: zero income/spend/bills; check $A_{h,m+1}=(1+\rho_m)A_{h,m}$.
+\end{itemize}
+
+\section{Extensibility Hooks}
+\begin{itemize}
+  \item Add $\phi_y$ output gap term to Taylor rule (requires activity proxy).
+  \item Add borrowing limits: $A_{h,t}\ge -\bar{D}_h$ with constraint-aware projection.
+  \item Richer wage rules: multi-sector labor, idiosyncratic shocks to $W_{h,m}$.
+\end{itemize}
+
+\section{Appendix: Key Equations (for Reference)}
+\subsection*{Inflation \& Drifts}
+$$
+\mathrm{CPI}_m=\sum_{k} w_k\,\frac{p_{k,m}}{p_{k,0}},\qquad
+\Pi_m=\frac{\mathrm{CPI}_m}{\mathrm{CPI}_{m-12}}-1.
+$$
+$$
+\delta_m^{(\mathrm{mo})}=(1+\Pi_m)^{1/12}-1,\qquad
+\delta_m^{(\mathrm{d})}=(1+\Pi_m)^{1/28}-1.
+$$
+
+\subsection*{Services}
+$$
+p_{s,m}=p_{s,m-1}\left(1+\delta_m^{(\mathrm{mo})}+\eta_{s,m}\right),\quad \eta_{s,m}\sim\mathcal{N}(0,\sigma_s^2).
+$$
+
+\subsection*{Goods}
+$$
+Q_{g,t}=\alpha_Q\,q_{g,t-1}+(1-\alpha_Q)\,\bar{Q}_g+\varepsilon_{g,t},\quad \varepsilon_{g,t}\sim\mathcal{N}(0,\sigma_Q^2).
+$$
+$$
+\hat{p}_{g,t}=p_{g,t-1}\left(1+\delta_m^{(\mathrm{d})}\right),\quad
+p_{g,t}\in\left\{\hat{p}_{g,t}(1+\alpha_{\uparrow}),\ \hat{p}_{g,t}(1-\beta_{\downarrow}),\ \hat{p}_{g,t}\right\}.
+$$
+Rationing:
+$$
+q_{h,g,t}=\frac{I^{\mathrm{start}}_{g,t}}{\sum_h q^{\mathrm{dem}}_{h,g,t}}\;q^{\mathrm{dem}}_{h,g,t}.
+$$
+
+\subsection*{Households}
+$$
+q^{(\mathrm{hh})}_{h,g,t}=\frac{e_{h,g,t}}{p_{g,t}},\qquad
+A_{h,t+1}=A_{h,t}+Y_{h,t}^{(d)}-\mathrm{Bills}_{h,t}-\sum_g \text{paid}_{h,g,t}+\sum_g \text{refund}_{h,g,t}.
+$$
+$$
+\rho_m=(1+i_m)^{1/12}-1,\qquad A_{h,m+1}=(1+\rho_m)\,A_{h,m}.
+$$
+
+\subsection*{Policy}
+$$
+i_m=r^\ast+\phi_\pi\left(\Pi_{m-L_{\pi}}-\pi^\ast\right),\qquad
+\rho_m=(1+i_m)^{1/12}-1.
+$$
+
+\end{document}
